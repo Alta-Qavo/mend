@@ -314,10 +314,12 @@ interface UniSection {
   delFlag: boolean;
   hunks: Hunk[];
   startLine: number;
+  /** Deletion section past its first hunk line: hunks are not read at all. */
+  skipHunks?: boolean;
 }
 
 const HUNK_HEAD = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@( .*)?$/;
-const DIFF_GIT = /^diff --git a\/(.+) b\/(.+)$/;
+const DIFF_GIT = /^diff --git a\/(\S+) b\/(\S+)$/;
 
 function parseHunk(lines: string[], i: number): { hunk: Hunk; next: number } {
   const m = HUNK_HEAD.exec(lines[i]!);
@@ -394,6 +396,17 @@ function parseDashPair(lines: string[], i: number): { old: string | null; next: 
   return { old: strip(oldRaw), next: strip(newRaw) };
 }
 
+/** Whether a section is a deletion, from its header alone (mirrors unifiedEdit). */
+function sectionIsDelete(sec: UniSection): boolean {
+  const oldP = sec.dashOld !== undefined ? sec.dashOld : sec.renOld !== undefined ? sec.renOld : sec.diffOld;
+  const newP = sec.dashNew !== undefined ? sec.dashNew : sec.renNew !== undefined ? sec.renNew : sec.diffNew;
+  const oldPath = oldP === undefined ? newP : oldP;
+  const newPath = newP === undefined ? oldP : newP;
+  if (oldPath === undefined || newPath === undefined) return false;
+  const isCreate = sec.createFlag || oldPath === null;
+  return !isCreate && (sec.delFlag || newPath === null);
+}
+
 function parseUnified(lines: string[], strict: boolean): Edit[] {
   const sections: UniSection[] = [];
   let cur: UniSection | null = null;
@@ -425,6 +438,18 @@ function parseUnified(lines: string[], strict: boolean): Edit[] {
         continue;
       }
       if (l.startsWith('@@')) throw new Exit2(`error: parse ${i + 1}`);
+      i += 1;
+      continue;
+    }
+    if (cur.skipHunks) {
+      if (l.startsWith('--- ') && (lines[i + 1] ?? '').startsWith('+++ ')) {
+        const s = startSection(i + 1);
+        const p = parseDashPair(lines, i);
+        s.dashOld = p.old;
+        s.dashNew = p.next;
+        i += 2;
+        continue;
+      }
       i += 1;
       continue;
     }
@@ -467,6 +492,11 @@ function parseUnified(lines: string[], strict: boolean): Edit[] {
         continue;
       }
       if (l.startsWith('@@')) {
+        if (sectionIsDelete(cur)) {
+          cur.skipHunks = true;
+          i += 1;
+          continue;
+        }
         const r = parseHunk(lines, i);
         cur.hunks.push(r.hunk);
         i = r.next;
