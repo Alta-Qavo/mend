@@ -57,7 +57,12 @@ function parentIsFile(p: string, tree: Tree): boolean {
 }
 
 function existsTarget(p: string, tree: Tree): boolean {
-  return tree.get(p) !== null || isDirPath(p) || parentIsFile(p, tree);
+  if (tree.get(p) !== null || isDirPath(p) || parentIsFile(p, tree)) return true;
+  const prefix = `${p}/`;
+  for (const [k, v] of tree.now) {
+    if (v !== null && k.startsWith(prefix)) return true;
+  }
+  return false;
 }
 
 function byteLess(a: string, b: string): number {
